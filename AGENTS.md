@@ -45,7 +45,7 @@ go run ./cmd/crtplus -d example.com
 | `-c` | `50` | Concurrent DNS lookups |
 | `-o` | stdout | Write alive hosts to a file |
 | `-silent` | `false` | Print hostnames only |
-| `-browser` | `false` | Open alive hosts in the default browser |
+| `-browser` | `false` | Open alive hosts as tabs in a new browser window |
 | `-browser-max` | `0` | Cap tabs opened (0 = all) |
 | `-browser-scheme` | `https` | Scheme for opened URLs |
 
@@ -86,9 +86,15 @@ There are no unit tests yet. If you add tests, use `go test ./...`.
 - Progress, rate-limit, and error messages go to **stderr**; results go to
   **stdout**. Keep that split so `-silent` output stays pipeable.
 - A host is "alive" if `net.Resolver` returns an IP or a CNAME.
-- `-browser` uses the OS default opener (`xdg-open`/`open`/`rundll32`) via
-  fire-and-forget `exec.Command(...).Start()`. Browser failures are non-fatal
-  and must never abort a run (the box is often headless).
+- `-browser` opens all alive hosts as tabs in a **single new window** by
+  invoking the detected default browser directly with `--new-window <urls...>`
+  (the plain OS opener cannot target a new window). Detection: `$BROWSER`, then
+  `xdg-settings`/`xdg-mime` → `.desktop` `Exec=`, then known binaries. If no
+  window-capable browser is found it falls back to the default opener and
+  reports that. Invocation is fire-and-forget `exec.Command(...).Start()`;
+  browser failures are non-fatal and must never abort a run (often headless).
+- `browser.OpenWindow` returns `(usedNewWindow bool, err error)` so callers can
+  tell the user which behavior happened.
 
 ## Conventions
 

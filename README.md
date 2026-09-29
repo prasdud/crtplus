@@ -30,7 +30,7 @@ crtplus -d <apex> [flags]
 | `-c` | `50` | Number of concurrent DNS lookups |
 | `-o` | stdout | Write alive hosts to a file |
 | `-silent` | `false` | Print only hostnames (no IPs/CNAMEs, no progress logs) |
-| `-browser` | `false` | Open every alive host in the default browser (new tabs) |
+| `-browser` | `false` | Open every alive host as tabs in a **new** browser window |
 | `-browser-max` | `0` | Cap tabs opened; `0` means all |
 | `-browser-scheme` | `https` | Scheme for opened URLs (`https` or `http`) |
 
@@ -63,7 +63,7 @@ crtplus -d projectdiscovery.io -silent | httpx -silent
 
 Rerunning the same day costs **zero** API calls — results are cached locally.
 
-Open every alive host in your default browser, as tabs in the current window:
+Open every alive host as tabs in a **new** browser window:
 
 ```bash
 crtplus -d projectdiscovery.io -browser
@@ -125,7 +125,12 @@ A host counts as **alive** if it resolves to at least one IP, or has a CNAME. De
 
 Alive hosts are printed sorted. The default format shows the host plus its IPs (or its CNAME target); `-silent` prints hostnames only. With `-o`, output is written to a file instead of stdout. Progress and rate-limit messages go to stderr, so stdout stays clean for piping.
 
-With `-browser`, each alive host is then opened as `scheme://<host>` using the default system browser — `xdg-open` on Linux, `open` on macOS, the shell handler on Windows. Calls are fire-and-forget with a short delay between them, and each normally lands as a new tab in the existing window. `-browser-max` caps how many open; failures (e.g. on a headless box) are reported to stderr and never abort the run.
+With `-browser`, the alive hosts are opened as `scheme://<host>`, all as tabs in a **single new browser window**. The OS default opener (`xdg-open`) can only target the existing window, so the tool instead detects the default browser and invokes it directly with `--new-window`:
+
+- Linux: `$BROWSER`, else `xdg-settings`/`xdg-mime` → the `.desktop` file's `Exec=` command, falling back to probing known browsers
+- then `--new-window <url1> <url2> …` for Chromium-family and Firefox
+
+If no window-capable browser is found it falls back to the default opener (tabs in the current window) and says so. `-browser-max` caps how many hosts open; failures (e.g. on a headless box) are reported to stderr and never abort the run.
 
 ## License
 

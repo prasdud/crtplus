@@ -8,7 +8,6 @@ import (
 	"os"
 	"sort"
 	"strings"
-	"time"
 
 	"crtplus/internal/browser"
 	"crtplus/internal/crt"
@@ -31,7 +30,7 @@ func main() {
 	flag.IntVar(&opts.concurrency, "c", 50, "concurrent DNS lookups")
 	flag.StringVar(&opts.outFile, "o", "", "write alive hosts to a file")
 	flag.BoolVar(&opts.silent, "silent", false, "print only hostnames")
-	flag.BoolVar(&opts.open, "browser", false, "open alive hosts in the default browser in new tabs")
+	flag.BoolVar(&opts.open, "browser", false, "open alive hosts as tabs in a new browser window")
 	flag.IntVar(&opts.openMax, "browser-max", 0, "max tabs to open (0 = all)")
 	flag.StringVar(&opts.scheme, "browser-scheme", "https", "scheme for opened URLs (https or http)")
 	flag.Parse()
@@ -115,16 +114,20 @@ func openInBrowser(alive []resolve.Result, opts options) {
 		}
 	}
 
+	urls := make([]string, 0, limit)
 	for i := 0; i < limit; i++ {
-		u := scheme + "://" + alive[i].Host
-		if err := browser.Open(u); err != nil {
-			fmt.Fprintf(os.Stderr, "[!] could not open %s: %v\n", u, err)
-			continue
-		}
-		if !opts.silent {
-			fmt.Fprintf(os.Stderr, "[+] opened %s\n", u)
-		}
-		time.Sleep(150 * time.Millisecond)
+		urls = append(urls, scheme+"://"+alive[i].Host)
+	}
+
+	usedNewWindow, err := browser.OpenWindow(urls)
+	switch {
+	case err != nil:
+		fmt.Fprintf(os.Stderr, "[!] could not open browser: %v\n", err)
+	case opts.silent:
+	case usedNewWindow:
+		fmt.Fprintf(os.Stderr, "[+] opened %d hosts in a new browser window\n", len(urls))
+	default:
+		fmt.Fprintf(os.Stderr, "[+] opened %d hosts in the default browser\n", len(urls))
 	}
 }
 
