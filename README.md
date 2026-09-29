@@ -10,6 +10,7 @@ Pure Go standard library — no external dependencies.
 |------|---------|--------------|
 | **crtplus** | `cmd/crtplus` | Subdomain enumeration via the [crt.name](https://crt.name) CT index, plus DNS liveness checks and optional browser open |
 | **apix** | `cmd/apix` | API endpoint enumeration from OpenAPI/Swagger docs, GraphQL introspection, JavaScript bundles, and Wayback history |
+| **bucketrecon** | `cmd/bucketrecon` | S3/Cloudflare R2 bucket reconnaissance: name mutations, existence/permission checks, dangling-CNAME takeover detection |
 
 ## Build
 
@@ -131,15 +132,84 @@ Results are normalized, deduped, and sorted.
 
 ---
 
+# bucketrecon
+
+Given a domain, find S3 and Cloudflare R2 buckets associated with it and grade anonymous access. Built for finding **public buckets** and **dangling-CNAME takeover** candidates.
+
+S3 and R2 differ fundamentally: S3 bucket names are global, so name mutation works; R2 names are account-scoped and `r2.dev` URLs use random hashes, so R2 is passive-only — and public R2 buckets don't allow root listing anyway.
+
+## Usage
+
+```bash
+bucketrecon -d <domain> [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-d` | — | Domain to recon (**required**) |
+| `-js` | `https://<domain>` | Site URL to mine for bucket references |
+| `-w` | built-in | Extra wordlist file for name mutations |
+| `-perm` | `false` | Also check anonymous object read on non-listable buckets |
+| `-no-brute` | `false` | Skip name permutation (passive only) |
+| `-no-dns` | `false` | Skip subdomain/CNAME takeover discovery |
+| `-all` | `false` | Include un-referenced brute-force results (default hides them) |
+| `-proxy` | — | Proxy URL(s) for S3 probes, comma-separated (`http`/`https`/`socks5`) |
+| `-proxy-file` | — | File of proxy URLs, one per line (rotated) |
+| `-no-canary` | `false` | Skip the S3 sanity canary check |
+| `-canary-bucket` | `google` | Known-existing bucket used for the canary |
+| `-t` | `15s` | Per-request timeout |
+| `-c` | `30` | Concurrency |
+| `-json` | `false` | Output JSON |
+| `-o` | stdout | Write results to a file |
+| `-silent` | `false` | Print only results, no progress |
+
+## Examples
+
+```bash
+bucketrecon -d example.com                 # full run
+bucketrecon -d example.com -no-brute       # passive + CNAME takeover only
+bucketrecon -d example.com -perm -json     # include read checks, JSON out
+bucketrecon -d example.com -all            # also show un-referenced brute results
+```
+
+Output columns: `PROVIDER  BUCKET  REGION  STATUS  SOURCE`, with tags `[LIST]`, `[READ]`, `[TAKEOVER]`. Status is one of `listable` (public listing), `private` (exists, no anonymous access), `available` (name free), `uncertain` (endpoints disagreed), or `unknown`; source is `dns`, `js`, `history`, or `brute`.
+
+By default only **target-referenced** buckets (source `dns`/`js`/`history`) and anything public or `[TAKEOVER]` are shown; un-referenced brute-force noise is hidden unless `-all`.
+
+Before probing, a **canary** HEADs a bucket known to exist (default `google`, override with `-canary-bucket`). If it returns `404`, the network is masking S3 lookups and the tool warns that existence results are unreliable. Probes can optionally be routed through `-proxy`/`-proxy-file` (`http`/`https`/`socks5`, rotated per request).
+
+Probing uses **HEAD** (`HeadBucket`) rather than GET — some networks rewrite GET responses to S3 but pass HEAD. Classification: `200` → `listable`, `403` → `private`, `404` → `available`, `301` → exists + region.
+
+## How it works
+
+```
+cmd/bucketrecon/main.go              # CLI + orchestration
+internal/bucketrecon/bucketrecon.go  # S3/R2 probing + classification
+internal/bucketrecon/mutate.go       # candidate name generation
+internal/bucketrecon/passive.go      # DNS-CNAME, JS, Wayback discovery
+```
+
+1. **Passive discovery** — subdomains (via `internal/crt`) are resolved and their CNAMEs scanned for S3/R2 endpoints; the site's JS is mined for bucket URLs; Wayback CDX is queried. These are high-signal (tied to the target).
+2. **Active enumeration** — bucket names are mutated from the domain (base, base.com, base-com, plus prefix/suffix forms with env/purpose words like `assets`, `uploads`, `backups`, `dev`, `prod`).
+3. **Consensus probing** — each candidate is checked against its virtual-hosted and path-style endpoints (and the regional endpoint when redirected), using HEAD (`HeadBucket`). Transport errors are retried, and if the endpoints disagree the result is `uncertain` rather than a guess. `listable` → HEAD `200`; `private` → `403`/redirect; `available` → `404`.
+4. **R2** — discovered `pub-*.r2.dev` and `*.r2.cloudflarestorage.com` endpoints are probed directly (no listing expected).
+5. **Takeover** — a CNAME pointing at an S3 bucket that returns `NoSuchBucket` is flagged `[TAKEOVER]`.
+
+**Caveat:** a mutated name that exists may belong to an unrelated third party. Only buckets tied to the target (source `dns`/`js`/`history`) or dangling CNAMEs are meaningful. Also note S3 anonymous-existence answers can be transient; the consensus check smooths most of that, but treat single results with caution.
+
+---
+
 ## Repository layout
 
 ```
 cmd/crtplus/                 subdomain enumerator
 cmd/apix/                    API endpoint enumerator
+cmd/bucketrecon/             S3/R2 bucket recon
 internal/crt/                crt.name client + validation
 internal/resolve/            DNS worker pool
 internal/browser/            system default browser control
 internal/apirecon/           API discovery sources
+internal/bucketrecon/        S3/R2 probing, mutation, passive discovery
 ```
 
 ## Conventions
