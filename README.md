@@ -1,24 +1,36 @@
+# recon-box
+
+A growing collection of small, dependency-free Go recon tools for bug bounty and pentesting. Each tool is a separate binary under `cmd/`, sharing code under `internal/`.
+
+Pure Go standard library — no external dependencies.
+
+## Tools
+
+| Tool | Command | What it does |
+|------|---------|--------------|
+| **crtplus** | `cmd/crtplus` | Subdomain enumeration via the [crt.name](https://crt.name) CT index, plus DNS liveness checks and optional browser open |
+| **apix** | `cmd/apix` | API endpoint enumeration from OpenAPI/Swagger docs, GraphQL introspection, JavaScript bundles, and Wayback history |
+
+## Build
+
+```bash
+# all tools into ./bin
+go build -o bin/ ./cmd/...
+
+# or individually
+go build -o crtplus ./cmd/crtplus
+go build -o apix    ./cmd/apix
+```
+
+Or run from source: `go run ./cmd/crtplus -d example.com`.
+
+---
+
 # crtplus
 
-Minimal subdomain enumeration for bug bounty recon. Give it an apex domain, it pulls everything the [crt.name](https://crt.name) certificate-transparency index has on file and tells you which hosts are actually alive via DNS.
+Give it an apex domain, it pulls everything the crt.name certificate-transparency index has on file and tells you which hosts are alive via DNS.
 
-Pure Go standard library — no external dependencies, single static binary.
-
-## Part 1 — How to run
-
-### Build
-
-```bash
-go build -o crtplus ./cmd/crtplus
-```
-
-Or run straight from source:
-
-```bash
-go run ./cmd/crtplus -d example.com
-```
-
-### Usage
+## Usage
 
 ```bash
 crtplus -d <apex> [flags]
@@ -34,50 +46,20 @@ crtplus -d <apex> [flags]
 | `-browser-max` | `0` | Cap tabs opened; `0` means all |
 | `-browser-scheme` | `https` | Scheme for opened URLs (`https` or `http`) |
 
-### Examples
-
-Enumerate and resolve `example.com`:
+## Examples
 
 ```bash
 crtplus -d example.com
-```
-
-```
-[+] crt.name returned 3088 subdomains for example.com
-[*] resolving 3087 unique hosts...
-[+] 1 hosts alive
-www.example.com        104.20.23.154, 172.66.147.243
-```
-
-Write the alive list to a file:
-
-```bash
 crtplus -d projectdiscovery.io -o alive.txt
-```
-
-Pipe a clean hostname-only list into other tools:
-
-```bash
 crtplus -d projectdiscovery.io -silent | httpx -silent
+crtplus -d projectdiscovery.io -browser -browser-max 10
 ```
 
 Rerunning the same day costs **zero** API calls — results are cached locally.
 
-Open every alive host as tabs in a **new** browser window:
+## How it works
 
-```bash
-crtplus -d projectdiscovery.io -browser
-```
-
-Cap it to avoid flooding the browser:
-
-```bash
-crtplus -d projectdiscovery.io -browser -browser-max 10
-```
-
-## Part 2 — How it works
-
-The tool is a four-stage pipeline: **enumerate → normalize → resolve → output**. Code lives under `internal/`:
+Four stages: **enumerate → normalize → resolve → output**.
 
 ```
 cmd/crtplus/main.go          # CLI flags + pipeline wiring
@@ -87,50 +69,82 @@ internal/resolve/resolve.go  # concurrent DNS resolution
 internal/browser/browser.go  # open URLs in the system default browser
 ```
 
-### 1. Enumerate (`internal/crt`)
+1. **Enumerate** — `GET https://crt.name/v1/search?apex=<domain>` returns plain text, one subdomain per line. `ValidateApex` rejects garbage before spending a request. The free tier is **100 requests/IP/day**, so responses are cached at `~/.recon/cache/crtname/<apex>-<YYYYMMDD>.txt`; same-day reruns hit the cache. The `x-ratelimit-remaining` header is printed as your budget drains.
+2. **Normalize** — lowercase, strip `*.`/trailing dots, drop the apex and non-subdomains, dedup, sort.
+3. **Resolve** — worker pool (`-c`, default 50) using `net.Resolver` with a 5s timeout. A host is **alive** if it resolves to an IP or has a CNAME.
+4. **Output** — sorted hosts with IPs (or CNAME target); `-silent` prints hostnames only; `-o` writes to a file. Progress/rate-limit messages go to stderr so stdout stays pipeable.
 
-Queries the free crt.name endpoint:
+With `-browser`, alive hosts open as `scheme://<host>` tabs in a **single new window**: the tool detects the default browser (`$BROWSER` → `xdg-settings`/`xdg-mime` → `.desktop` `Exec=` → known binaries) and invokes it with `--new-window <urls...>` (Chromium-family and Firefox). Falls back to the default opener if no window-capable browser is found. Failures are non-fatal and reported to stderr.
+
+---
+
+# apix
+
+Give it a base API URL, it enumerates endpoints from passive, high-signal sources. No guessing by default.
+
+## Usage
+
+```bash
+apix -u <base-api-url> [-js <site-url>] [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-u` | — | Base API URL to enumerate (**required**) |
+| `-js` | — | Site URL whose JavaScript bundles to mine for paths |
+| `-t` | `15s` | Per-request timeout |
+| `-no-history` | `false` | Skip Wayback passive history |
+| `-H` | — | Custom header `Name: value` (repeatable), e.g. auth |
+| `-o` | stdout | Write endpoints to a file |
+| `-silent` | `false` | Print only endpoints, no progress |
+
+## Examples
+
+```bash
+apix -u https://api.example.com
+apix -u https://api.example.com -js https://app.example.com
+apix -u https://api.example.com -H "Authorization: Bearer $TOKEN"
+```
+
+Output is tagged by source:
 
 ```
-GET https://crt.name/v1/search?apex=<domain>
+GET      /v1/verify                       [spec]
+POST     /v2/tasks/{task_id}/transitions  [spec]
+         /api/v1/users                    [js]
+         /v1/legacy-endpoint              [history]
 ```
 
-The response is plain text, one subdomain per line. Before spending a request, `ValidateApex` rejects obvious garbage (empty strings, spaces, underscores, URLs, single labels) because the API returns HTTP 400 for anything that isn't an eTLD+1.
-
-The free tier allows **100 requests per IP per day**, so every successful response is cached at:
+## How it works
 
 ```
-~/.recon/cache/crtname/<apex>-<YYYYMMDD>.txt
+cmd/apix/main.go                # CLI flags + wiring + merge/dedup
+internal/apirecon/apirecon.go   # discovery sources
 ```
 
-On any rerun in the same day the cache is read instead of hitting the network. The `x-ratelimit-remaining` response header is printed so you can see your budget draining.
+1. **Spec/doc discovery** — probes common paths (`/openapi.json`, `/swagger.json`, `/v2/api-docs`, `/api-docs`, `/swagger-ui.html`, …) and parses OpenAPI/Swagger JSON into path+method pairs. A `401`/`403` on a doc path is recorded as an existing-but-guarded endpoint.
+2. **GraphQL introspection** — POSTs an introspection query to `/graphql`, `/graphiql`, `/api/graphql` and lists query/mutation field names.
+3. **JS mining** — fetches the site HTML, extracts `<script src>`, fetches the bundles, and regexes out root-relative paths and absolute URLs, dropping static assets and framework internals.
+4. **Wayback history** — pulls previously archived URLs for the host from the CDX API.
 
-### 2. Normalize
+Results are normalized, deduped, and sorted.
 
-The raw list is cleaned before resolution:
+---
 
-- lowercased and trimmed
-- wildcard prefixes (`*.`) and trailing dots stripped
-- the apex itself dropped
-- entries that aren't subdomains of the apex dropped
-- deduplicated, then sorted
+## Repository layout
 
-### 3. Resolve (`internal/resolve`)
+```
+cmd/crtplus/                 subdomain enumerator
+cmd/apix/                    API endpoint enumerator
+internal/crt/                crt.name client + validation
+internal/resolve/            DNS worker pool
+internal/browser/            system default browser control
+internal/apirecon/           API discovery sources
+```
 
-Hosts are pushed through a worker pool (`-c`, default 50 goroutines). Each worker calls `net.Resolver` with a 5-second timeout to look up the CNAME and the host's `A`/`AAAA` records.
+## Conventions
 
-A host counts as **alive** if it resolves to at least one IP, or has a CNAME. Dead hosts are silently discarded. Results carry both the IPs and, when the host is an alias, its canonical CNAME target.
-
-### 4. Output (`cmd/crtplus`)
-
-Alive hosts are printed sorted. The default format shows the host plus its IPs (or its CNAME target); `-silent` prints hostnames only. With `-o`, output is written to a file instead of stdout. Progress and rate-limit messages go to stderr, so stdout stays clean for piping.
-
-With `-browser`, the alive hosts are opened as `scheme://<host>`, all as tabs in a **single new browser window**. The OS default opener (`xdg-open`) can only target the existing window, so the tool instead detects the default browser and invokes it directly with `--new-window`:
-
-- Linux: `$BROWSER`, else `xdg-settings`/`xdg-mime` → the `.desktop` file's `Exec=` command, falling back to probing known browsers
-- then `--new-window <url1> <url2> …` for Chromium-family and Firefox
-
-If no window-capable browser is found it falls back to the default opener (tabs in the current window) and says so. `-browser-max` caps how many hosts open; failures (e.g. on a headless box) are reported to stderr and never abort the run.
+Standard library only; keep it dependency-free. Run `gofmt` and `go vet ./...` before finishing. Results go to **stdout**, progress/errors to **stderr**, so `-silent` stays pipeable.
 
 ## License
 

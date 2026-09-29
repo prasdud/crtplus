@@ -9,9 +9,9 @@ import (
 	"sort"
 	"strings"
 
-	"crtplus/internal/browser"
-	"crtplus/internal/crt"
-	"crtplus/internal/resolve"
+	"github.com/prasdud/recon-box/internal/browser"
+	"github.com/prasdud/recon-box/internal/crt"
+	"github.com/prasdud/recon-box/internal/resolve"
 )
 
 type options struct {
