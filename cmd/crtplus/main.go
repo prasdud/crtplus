@@ -8,79 +8,124 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
+	"crtplus/internal/browser"
 	"crtplus/internal/crt"
 	"crtplus/internal/resolve"
 )
 
+type options struct {
+	domain      string
+	concurrency int
+	outFile     string
+	silent      bool
+	open        bool
+	openMax     int
+	scheme      string
+}
+
 func main() {
-	var (
-		domain      = flag.String("d", "", "apex domain to enumerate (required)")
-		concurrency = flag.Int("c", 50, "concurrent DNS lookups")
-		outFile     = flag.String("o", "", "write alive hosts to a file")
-		silent      = flag.Bool("silent", false, "print only hostnames")
-	)
+	var opts options
+	flag.StringVar(&opts.domain, "d", "", "apex domain to enumerate (required)")
+	flag.IntVar(&opts.concurrency, "c", 50, "concurrent DNS lookups")
+	flag.StringVar(&opts.outFile, "o", "", "write alive hosts to a file")
+	flag.BoolVar(&opts.silent, "silent", false, "print only hostnames")
+	flag.BoolVar(&opts.open, "browser", false, "open alive hosts in the default browser in new tabs")
+	flag.IntVar(&opts.openMax, "browser-max", 0, "max tabs to open (0 = all)")
+	flag.StringVar(&opts.scheme, "browser-scheme", "https", "scheme for opened URLs (https or http)")
 	flag.Parse()
 
-	if *domain == "" {
-		fmt.Fprintln(os.Stderr, "usage: crtplus -d example.com [-c 50] [-o alive.txt] [-silent]")
+	if opts.domain == "" {
+		fmt.Fprintln(os.Stderr, "usage: crtplus -d example.com [-c 50] [-o alive.txt] [-silent] [-browser]")
 		flag.PrintDefaults()
 		os.Exit(2)
 	}
 
-	if err := run(*domain, *concurrency, *outFile, *silent); err != nil {
+	if err := run(opts); err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
 }
 
-func run(domain string, concurrency int, outFile string, silent bool) error {
+func run(opts options) error {
 	ctx := context.Background()
-	apex := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(domain)), "www.")
+	apex := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(opts.domain)), "www.")
 
 	client := crt.NewClient()
 	subs, err := client.Search(ctx, apex)
 	if err != nil {
 		return err
 	}
-	if !silent {
+	if !opts.silent {
 		fmt.Fprintf(os.Stderr, "[+] crt.name returned %d subdomains for %s\n", len(subs), apex)
 	}
 
 	hosts := normalize(subs, apex)
-	if !silent {
+	if !opts.silent {
 		fmt.Fprintf(os.Stderr, "[*] resolving %d unique hosts...\n", len(hosts))
 	}
 
-	alive := resolve.All(ctx, hosts, concurrency)
-	if !silent {
+	alive := resolve.All(ctx, hosts, opts.concurrency)
+	if !opts.silent {
 		fmt.Fprintf(os.Stderr, "[+] %d hosts alive\n", len(alive))
 	}
 
-	var buf bufio.Writer
-	if outFile != "" {
-		f, err := os.Create(outFile)
+	f := os.Stdout
+	if opts.outFile != "" {
+		created, err := os.Create(opts.outFile)
 		if err != nil {
 			return err
 		}
-		defer f.Close()
-		buf = *bufio.NewWriter(f)
-	} else {
-		buf = *bufio.NewWriter(os.Stdout)
+		defer created.Close()
+		f = created
 	}
-	defer buf.Flush()
-
+	w := bufio.NewWriter(f)
 	for _, r := range alive {
 		switch {
-		case silent:
-			fmt.Fprintln(&buf, r.Host)
+		case opts.silent:
+			fmt.Fprintln(w, r.Host)
 		case len(r.IPs) > 0:
-			fmt.Fprintf(&buf, "%-50s %s\n", r.Host, strings.Join(r.IPs, ", "))
+			fmt.Fprintf(w, "%-50s %s\n", r.Host, strings.Join(r.IPs, ", "))
 		default:
-			fmt.Fprintf(&buf, "%-50s CNAME -> %s\n", r.Host, r.CNAME)
+			fmt.Fprintf(w, "%-50s CNAME -> %s\n", r.Host, r.CNAME)
 		}
 	}
+	if err := w.Flush(); err != nil {
+		return err
+	}
+
+	if opts.open {
+		openInBrowser(alive, opts)
+	}
 	return nil
+}
+
+func openInBrowser(alive []resolve.Result, opts options) {
+	scheme := strings.TrimSuffix(strings.ToLower(strings.TrimSpace(opts.scheme)), "://")
+	if scheme == "" {
+		scheme = "https"
+	}
+
+	limit := len(alive)
+	if opts.openMax > 0 && opts.openMax < limit {
+		limit = opts.openMax
+		if !opts.silent {
+			fmt.Fprintf(os.Stderr, "[!] opening first %d of %d hosts\n", limit, len(alive))
+		}
+	}
+
+	for i := 0; i < limit; i++ {
+		u := scheme + "://" + alive[i].Host
+		if err := browser.Open(u); err != nil {
+			fmt.Fprintf(os.Stderr, "[!] could not open %s: %v\n", u, err)
+			continue
+		}
+		if !opts.silent {
+			fmt.Fprintf(os.Stderr, "[+] opened %s\n", u)
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
 }
 
 // normalize lowercases, strips wildcards/dots, drops the apex itself and dedups.

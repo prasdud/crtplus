@@ -30,6 +30,9 @@ crtplus -d <apex> [flags]
 | `-c` | `50` | Number of concurrent DNS lookups |
 | `-o` | stdout | Write alive hosts to a file |
 | `-silent` | `false` | Print only hostnames (no IPs/CNAMEs, no progress logs) |
+| `-browser` | `false` | Open every alive host in the default browser (new tabs) |
+| `-browser-max` | `0` | Cap tabs opened; `0` means all |
+| `-browser-scheme` | `https` | Scheme for opened URLs (`https` or `http`) |
 
 ### Examples
 
@@ -60,6 +63,18 @@ crtplus -d projectdiscovery.io -silent | httpx -silent
 
 Rerunning the same day costs **zero** API calls — results are cached locally.
 
+Open every alive host in your default browser, as tabs in the current window:
+
+```bash
+crtplus -d projectdiscovery.io -browser
+```
+
+Cap it to avoid flooding the browser:
+
+```bash
+crtplus -d projectdiscovery.io -browser -browser-max 10
+```
+
 ## Part 2 — How it works
 
 The tool is a four-stage pipeline: **enumerate → normalize → resolve → output**. Code lives under `internal/`:
@@ -69,6 +84,7 @@ cmd/crtplus/main.go          # CLI flags + pipeline wiring
 internal/crt/crt.go          # crt.name client, caching, rate-limit awareness
 internal/crt/validate.go     # lightweight apex sanity check
 internal/resolve/resolve.go  # concurrent DNS resolution
+internal/browser/browser.go  # open URLs in the system default browser
 ```
 
 ### 1. Enumerate (`internal/crt`)
@@ -108,6 +124,8 @@ A host counts as **alive** if it resolves to at least one IP, or has a CNAME. De
 ### 4. Output (`cmd/crtplus`)
 
 Alive hosts are printed sorted. The default format shows the host plus its IPs (or its CNAME target); `-silent` prints hostnames only. With `-o`, output is written to a file instead of stdout. Progress and rate-limit messages go to stderr, so stdout stays clean for piping.
+
+With `-browser`, each alive host is then opened as `scheme://<host>` using the default system browser — `xdg-open` on Linux, `open` on macOS, the shell handler on Windows. Calls are fire-and-forget with a short delay between them, and each normally lands as a new tab in the existing window. `-browser-max` caps how many open; failures (e.g. on a headless box) are reported to stderr and never abort the run.
 
 ## License
 

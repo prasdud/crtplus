@@ -18,6 +18,7 @@ cmd/crtplus/main.go          CLI flags + pipeline wiring + output
 internal/crt/crt.go          crt.name client, per-day response cache
 internal/crt/validate.go     apex sanity check
 internal/resolve/resolve.go  concurrent DNS resolution (worker pool)
+internal/browser/browser.go  open URLs in the system default browser
 ```
 
 ## Build
@@ -44,6 +45,9 @@ go run ./cmd/crtplus -d example.com
 | `-c` | `50` | Concurrent DNS lookups |
 | `-o` | stdout | Write alive hosts to a file |
 | `-silent` | `false` | Print hostnames only |
+| `-browser` | `false` | Open alive hosts in the default browser |
+| `-browser-max` | `0` | Cap tabs opened (0 = all) |
+| `-browser-scheme` | `https` | Scheme for opened URLs |
 
 Examples:
 
@@ -51,6 +55,7 @@ Examples:
 ./crtplus -d example.com
 ./crtplus -d projectdiscovery.io -o alive.txt
 ./crtplus -d projectdiscovery.io -silent | httpx -silent
+./crtplus -d projectdiscovery.io -browser -browser-max 10
 ```
 
 ## Verify changes
@@ -81,6 +86,9 @@ There are no unit tests yet. If you add tests, use `go test ./...`.
 - Progress, rate-limit, and error messages go to **stderr**; results go to
   **stdout**. Keep that split so `-silent` output stays pipeable.
 - A host is "alive" if `net.Resolver` returns an IP or a CNAME.
+- `-browser` uses the OS default opener (`xdg-open`/`open`/`rundll32`) via
+  fire-and-forget `exec.Command(...).Start()`. Browser failures are non-fatal
+  and must never abort a run (the box is often headless).
 
 ## Conventions
 
