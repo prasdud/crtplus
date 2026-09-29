@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prasdud/recon-box/internal/bucketrecon"
+	"github.com/prasdud/recon-box/internal/crt"
 )
 
 func main() {
@@ -111,9 +112,8 @@ func run(opts options) error {
 		}
 	}
 
-	domain := strings.TrimPrefix(strings.TrimPrefix(opts.domain, "https://"), "http://")
-	domain = strings.TrimSuffix(domain, "/")
-	apex := strings.TrimPrefix(strings.ToLower(domain), "www.")
+	domain := crt.NormalizeApex(opts.domain)
+	apex := domain
 
 	var refs []bucketrecon.BucketRef
 

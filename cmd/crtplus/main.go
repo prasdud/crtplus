@@ -49,7 +49,7 @@ func main() {
 
 func run(opts options) error {
 	ctx := context.Background()
-	apex := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(opts.domain)), "www.")
+	apex := crt.NormalizeApex(opts.domain)
 
 	client := crt.NewClient()
 	subs, err := client.Search(ctx, apex)

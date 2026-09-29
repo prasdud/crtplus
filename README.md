@@ -39,7 +39,7 @@ crtplus -d <apex> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-d` | — | Apex domain to enumerate (**required**) |
+| `-d` | — | Apex domain **or full URL** to enumerate (**required**) |
 | `-c` | `50` | Number of concurrent DNS lookups |
 | `-o` | stdout | Write alive hosts to a file |
 | `-silent` | `false` | Print only hostnames (no IPs/CNAMEs, no progress logs) |
@@ -51,6 +51,7 @@ crtplus -d <apex> [flags]
 
 ```bash
 crtplus -d example.com
+crtplus -d https://example.com/      # full URLs are accepted and normalized
 crtplus -d projectdiscovery.io -o alive.txt
 crtplus -d projectdiscovery.io -silent | httpx -silent
 crtplus -d projectdiscovery.io -browser -browser-max 10
@@ -205,7 +206,7 @@ internal/bucketrecon/passive.go      # DNS-CNAME, JS, Wayback discovery
 cmd/crtplus/                 subdomain enumerator
 cmd/apix/                    API endpoint enumerator
 cmd/bucketrecon/             S3/R2 bucket recon
-internal/crt/                crt.name client + validation
+internal/crt/                crt.name client, validation, apex normalization
 internal/resolve/            DNS worker pool
 internal/browser/            system default browser control
 internal/apirecon/           API discovery sources

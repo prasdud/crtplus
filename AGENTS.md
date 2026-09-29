@@ -29,6 +29,7 @@ cmd/apix/main.go                    CLI flags + wiring + merge/dedup
 cmd/bucketrecon/main.go             CLI + orchestration + output
 internal/crt/crt.go                 crt.name client, per-day response cache
 internal/crt/validate.go            apex sanity check
+internal/crt/normalize.go           NormalizeApex: URL/domain input cleanup
 internal/resolve/resolve.go         concurrent DNS resolution (worker pool)
 internal/browser/browser.go         open URLs in the system default browser
 internal/apirecon/apirecon.go       API discovery sources
@@ -58,7 +59,7 @@ Or run without building: `go run ./cmd/crtplus -d example.com`.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `-d` | — | Apex domain to enumerate (required) |
+| `-d` | — | Apex domain or full URL to enumerate (required) |
 | `-c` | `50` | Concurrent DNS lookups |
 | `-o` | stdout | Write alive hosts to a file |
 | `-silent` | `false` | Print hostnames only |
@@ -151,6 +152,9 @@ There are no unit tests yet. If you add tests, use `go test ./...`.
 ## Behavior notes
 
 ### crtplus
+- Input is normalized by `crt.NormalizeApex`: it accepts a domain or a full URL
+  and strips scheme, userinfo, port, path/query/fragment, leading `www.`/`*.`,
+  and trailing dots. Reuse it for other tools rather than re-parsing by hand.
 - **crt.name free tier is 100 requests/IP/day.** Responses are cached at
   `~/.recon/cache/crtname/<apex>-<YYYYMMDD>.txt`; same-day reruns read the cache
   and make zero API calls. Never bypass the cache unnecessarily.
